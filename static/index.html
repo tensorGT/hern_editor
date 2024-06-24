@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PhotoStudio | Hybrid Photo Editor</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Bar -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <strong>PhotoStudio</strong>
+        <span class="badge">JS WebGL2 + Python</span>
+      </div>
+
+      <div class="top-actions">
+        <label class="btn btn-secondary" for="file-input">Open Photo</label>
+        <input id="file-input" type="file" accept="image/*" hidden />
+        <button id="btn-sample" class="btn btn-ghost" title="Load sample Kenyan sunset">Try Sample</button>
+        <span class="sep"></span>
+        <button id="btn-undo" class="btn btn-ghost" title="Undo (Ctrl+Z)" disabled>Undo</button>
+        <button id="btn-redo" class="btn btn-ghost" title="Redo (Ctrl+Y)" disabled>Redo</button>
+        <button id="btn-compare" class="btn btn-ghost" title="Hold \ or click to compare">Compare (\)</button>
+        <button id="btn-clipping" class="btn btn-ghost" title="Toggle clipping warnings (J)">Clipping (J)</button>
+        <button id="btn-reset" class="btn btn-ghost">Reset All</button>
+        <span class="sep"></span>
+        <button id="btn-export-open" class="btn btn-primary" disabled>Export Photo</button>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="workspace">
+      <!-- Left Rail: Tools & Presets -->
+      <aside class="left-rail">
+        <div class="rail-section">
+          <div class="rail-title">Tools</div>
+          <button class="tool-btn active" data-tool="move" title="Pan & Inspect (V)">Pan / View</button>
+          <button class="tool-btn" data-tool="crop" title="Crop & Straighten (C)">Crop</button>
+          <button class="tool-btn" data-tool="erase" title="Magic Eraser Mask (B)">Magic Eraser</button>
+        </div>
+
+        <div class="rail-section" id="erase-controls" style="display:none;">
+          <div class="rail-title">Eraser Brush</div>
+          <label class="mini-label">Brush Size <span id="val-brush-size">28</span>px</label>
+          <input id="brush-size" type="range" min="6" max="120" value="28" />
+          <div class="btn-row">
+            <button id="btn-run-inpaint" class="btn btn-primary btn-sm">Erase Masked</button>
+            <button id="btn-clear-mask" class="btn btn-ghost btn-sm">Clear</button>
+          </div>
+          <p class="hint-text">Paint red on the part you want to remove, then click Erase Masked.</p>
+        </div>
+
+        <div class="rail-section">
+          <div class="rail-title">Presets</div>
+          <div class="preset-grid">
+            <button class="preset-btn" data-preset="default">Original</button>
+            <button class="preset-btn" data-preset="nairobi_sunset">Nairobi Sunset</button>
+            <button class="preset-btn" data-preset="mara_vivid">Mara Vivid</button>
+            <button class="preset-btn" data-preset="lamu_teal">Lamu Teal</button>
+            <button class="preset-btn" data-preset="rift_film">Rift Film</button>
+            <button class="preset-btn" data-preset="classic_bw">Classic B&amp;W</button>
+          </div>
+        </div>
+
+        <div class="rail-section">
+          <div class="rail-title">Python Server Ops</div>
+          <p class="hint-text">Heavy work goes to the server:</p>
+          <div class="server-ops">
+            <button id="btn-auto-enhance" class="btn btn-secondary btn-sm" disabled>Auto Enhance</button>
+            <button id="btn-denoise" class="btn btn-secondary btn-sm" disabled>Heavy Denoise</button>
+            <button id="btn-upscale" class="btn btn-secondary btn-sm" disabled>2x Upscale</button>
+            <button id="btn-remove-bg" class="btn btn-secondary btn-sm" disabled>Remove Background</button>
+            <button id="btn-revert-base" class="btn btn-ghost btn-sm" disabled>Revert Server Base</button>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Center Canvas Viewport -->
+      <section class="viewport" id="viewport">
+        <div class="empty-state" id="empty-state">
+          <div class="empty-card">
+            <h2>Welcome to PhotoStudio</h2>
+            <p>Just drop your photo here, or click <strong>Open Photo</strong> / <strong>Try Sample</strong> to start editing.</p>
+            <p class="sub-note">Fast sliders run on your browser GPU (WebGL2). Heavy ops run on Python server.</p>
+          </div>
+        </div>
+
+        <div class="canvas-stage" id="canvas-stage" style="display:none;">
+          <canvas id="gl-canvas"></canvas>
+          <canvas id="overlay-canvas"></canvas>
+        </div>
+
+        <div class="zoom-pill" id="zoom-pill" style="display:none;">
+          <button id="btn-zoom-out" class="btn btn-ghost btn-xs">-</button>
+          <span id="zoom-label">100%</span>
+          <button id="btn-zoom-in" class="btn btn-ghost btn-xs">+</button>
+          <button id="btn-zoom-fit" class="btn btn-ghost btn-xs">Fit</button>
+        </div>
+
+        <div class="status-toast" id="status-toast"></div>
+      </section>
+
+      <!-- Right Inspector -->
+      <aside class="inspector">
+        <!-- Live Histogram -->
+        <div class="panel">
+          <div class="panel-header">
+            <span>Histogram</span>
+            <span id="img-dims" class="muted">No image</span>
+          </div>
+          <canvas id="histogram-canvas" width="280" height="84"></canvas>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tab-bar">
+          <button class="tab-btn active" data-tab="tone">Tone</button>
+          <button class="tab-btn" data-tab="color">Color</button>
+          <button class="tab-btn" data-tab="curve">Curve</button>
+          <button class="tab-btn" data-tab="fx">FX &amp; Crop</button>
+        </div>
+
+        <!-- Tab: Tone -->
+        <div class="tab-pane active" id="tab-tone">
+          <div class="slider-group" data-sliders="tone"></div>
+        </div>
+
+        <!-- Tab: Color -->
+        <div class="tab-pane" id="tab-color">
+          <div class="slider-group" data-sliders="color"></div>
+          <div class="sub-panel">
+            <div class="panel-header">
+              <span>HSL Mixer</span>
+              <select id="hsl-channel">
+                <option value="red">Red</option>
+                <option value="orange">Orange</option>
+                <option value="yellow">Yellow</option>
+                <option value="green">Green</option>
+                <option value="aqua">Aqua</option>
+                <option value="blue">Blue</option>
+                <option value="purple">Purple</option>
+                <option value="magenta">Magenta</option>
+              </select>
+            </div>
+            <div id="hsl-sliders"></div>
+          </div>
+
+          <div class="sub-panel">
+            <div class="panel-header"><span>Split Toning</span></div>
+            <div id="split-sliders"></div>
+          </div>
+        </div>
+
+        <!-- Tab: Curve -->
+        <div class="tab-pane" id="tab-curve">
+          <div class="curve-channels">
+            <button class="curve-ch-btn active" data-ch="rgb">RGB</button>
+            <button class="curve-ch-btn" data-ch="r">Red</button>
+            <button class="curve-ch-btn" data-ch="g">Green</button>
+            <button class="curve-ch-btn" data-ch="b">Blue</button>
+            <button id="btn-reset-curve" class="btn btn-ghost btn-xs">Reset</button>
+          </div>
+          <canvas id="curve-canvas" width="260" height="260"></canvas>
+          <p class="hint-text">Click to add point, drag to shape, double-click point to remove.</p>
+        </div>
+
+        <!-- Tab: FX & Crop -->
+        <div class="tab-pane" id="tab-fx">
+          <div class="slider-group" data-sliders="fx"></div>
+          <div class="sub-panel">
+            <div class="panel-header"><span>Transform &amp; Crop</span></div>
+            <div class="btn-row">
+              <button id="btn-rot-left" class="btn btn-secondary btn-sm">Rotate -90</button>
+              <button id="btn-rot-right" class="btn btn-secondary btn-sm">Rotate +90</button>
+            </div>
+            <div class="btn-row" style="margin-top:6px;">
+              <button id="btn-flip-h" class="btn btn-secondary btn-sm">Flip H</button>
+              <button id="btn-flip-v" class="btn btn-secondary btn-sm">Flip V</button>
+            </div>
+            <div style="margin-top:10px;">
+              <label class="mini-label">Straighten <span id="val-straighten">0</span>deg</label>
+              <input id="straighten-slider" type="range" min="-45" max="45" step="0.5" value="0" />
+            </div>
+            <div style="margin-top:8px;">
+              <label class="mini-label">Aspect Ratio</label>
+              <select id="crop-aspect">
+                <option value="free">Freeform</option>
+                <option value="1">1:1 Square</option>
+                <option value="0.8">4:5 Portrait</option>
+                <option value="1.5">3:2 Classic</option>
+                <option value="1.7777">16:9 Wide</option>
+              </select>
+            </div>
+            <button id="btn-reset-crop" class="btn btn-ghost btn-sm" style="margin-top:8px; width:100%;">Reset Crop</button>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- Export Modal -->
+  <div class="modal-backdrop" id="export-modal" style="display:none;">
+    <div class="modal-card">
+      <h3>Export Full-Res Photo</h3>
+      <p class="hint-text">Python server will replay all your edits at full resolution.</p>
+      <div class="form-row">
+        <label>Format</label>
+        <select id="export-format">
+          <option value="jpeg">JPEG (.jpg)</option>
+          <option value="png">PNG (.png, supports alpha)</option>
+          <option value="webp">WebP (.webp)</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Quality <span id="val-export-quality">92</span>%</label>
+        <input id="export-quality" type="range" min="40" max="100" value="92" />
+      </div>
+      <div class="form-row">
+        <label>Max Edge (px, leave blank for original)</label>
+        <input id="export-max-dim" type="number" min="100" max="12000" placeholder="Original full size" />
+      </div>
+      <div class="modal-actions">
+        <button id="btn-export-cancel" class="btn btn-ghost">Cancel</button>
+        <button id="btn-export-go" class="btn btn-primary">Download Export</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/webgl.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
