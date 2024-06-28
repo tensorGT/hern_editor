@@ -2,8 +2,8 @@ import uvicorn
 
 
 def main() -> None:
-    """Start PhotoStudio server plug-and-play."""
-    print("Hello! Starting PhotoStudio on http://127.0.0.1:8000 ...")
+    """Start Photo Editor server plug-and-play."""
+    print("Hello! Starting server on http://127.0.0.1:8000 ...")
     uvicorn.run(
         "app.main:app",
         host="127.0.0.1",

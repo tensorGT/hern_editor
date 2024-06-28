@@ -3,45 +3,99 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PhotoStudio | Hybrid Photo Editor</title>
+  <title>Photo Editor</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <div class="app-shell">
-    <!-- Top Bar -->
+    <!-- Top Bar (No Brand Name) -->
     <header class="topbar">
-      <div class="brand">
-        <span class="brand-dot"></span>
-        <strong>PhotoStudio</strong>
-        <span class="badge">JS WebGL2 + Python</span>
+      <div class="top-left">
+        <button id="btn-toggle-left" class="btn btn-secondary btn-sm" title="Collapse/Expand Toolbar">Tools</button>
+        <label class="btn btn-secondary btn-sm" for="file-input">Open Photo</label>
+        <input id="file-input" type="file" accept="image/*" hidden />
+        <button id="btn-sample" class="btn btn-ghost btn-sm" title="Load sample photo">Try Sample</button>
       </div>
 
       <div class="top-actions">
-        <label class="btn btn-secondary" for="file-input">Open Photo</label>
-        <input id="file-input" type="file" accept="image/*" hidden />
-        <button id="btn-sample" class="btn btn-ghost" title="Load sample Kenyan sunset">Try Sample</button>
+        <button id="btn-undo" class="btn btn-ghost btn-sm" title="Reset last action (Ctrl+Z)" disabled>Reset Last</button>
+        <span id="history-badge" class="badge">0/0</span>
+        <button id="btn-redo" class="btn btn-ghost btn-sm" title="Redo (Ctrl+Y)" disabled>Redo</button>
+        <button id="btn-compare" class="btn btn-ghost btn-sm" title="Hold \ or click to compare">Compare (\)</button>
+        <button id="btn-clipping" class="btn btn-ghost btn-sm" title="Toggle clipping warnings (J)">Clipping (J)</button>
+        <button id="btn-reset" class="btn btn-ghost btn-sm">Reset All</button>
         <span class="sep"></span>
-        <button id="btn-undo" class="btn btn-ghost" title="Undo (Ctrl+Z)" disabled>Undo</button>
-        <button id="btn-redo" class="btn btn-ghost" title="Redo (Ctrl+Y)" disabled>Redo</button>
-        <button id="btn-compare" class="btn btn-ghost" title="Hold \ or click to compare">Compare (\)</button>
-        <button id="btn-clipping" class="btn btn-ghost" title="Toggle clipping warnings (J)">Clipping (J)</button>
-        <button id="btn-reset" class="btn btn-ghost">Reset All</button>
-        <span class="sep"></span>
-        <button id="btn-export-open" class="btn btn-primary" disabled>Export Photo</button>
+        <button id="btn-export-open" class="btn btn-primary btn-sm" disabled>Export</button>
+        <button id="btn-toggle-right" class="btn btn-secondary btn-sm" title="Collapse/Expand Inspector">Panel</button>
       </div>
     </header>
 
     <!-- Main Workspace -->
-    <main class="workspace">
-      <!-- Left Rail: Tools & Presets -->
-      <aside class="left-rail">
+    <main class="workspace" id="workspace">
+      <!-- Left Rail: Collapsible Toolbar -->
+      <aside class="left-rail" id="left-rail">
         <div class="rail-section">
           <div class="rail-title">Tools</div>
           <button class="tool-btn active" data-tool="move" title="Pan & Inspect (V)">Pan / View</button>
-          <button class="tool-btn" data-tool="crop" title="Crop & Straighten (C)">Crop</button>
+          <button class="tool-btn" data-tool="crop" title="Crop & Shape Modes (C)">Crop Modes</button>
+          <button class="tool-btn" data-tool="collage" title="Add Images for Collage">Collage / Add Image</button>
+          <button class="tool-btn" data-tool="text" title="Add Meme / Text">Meme / Text</button>
           <button class="tool-btn" data-tool="erase" title="Magic Eraser Mask (B)">Magic Eraser</button>
         </div>
 
+        <!-- Collage Controls -->
+        <div class="rail-section" id="collage-controls" style="display:none;">
+          <div class="rail-title">Collage Layers</div>
+          <label class="btn btn-primary btn-sm" for="collage-input" style="display:block; text-align:center; margin-bottom:8px;">+ Add Image on Top</label>
+          <input id="collage-input" type="file" accept="image/*" hidden />
+          <div id="collage-layer-props" style="display:none;">
+            <label class="mini-label">Scale <span id="val-img-scale">35</span>%</label>
+            <input id="img-scale" type="range" min="5" max="150" value="35" />
+            <label class="mini-label">Rotation <span id="val-img-rot">0</span>deg</label>
+            <input id="img-rot" type="range" min="-180" max="180" value="0" />
+            <label class="mini-label">Opacity <span id="val-img-op">100</span>%</label>
+            <input id="img-op" type="range" min="10" max="100" value="100" />
+            <button id="btn-del-img-layer" class="btn btn-ghost btn-sm" style="width:100%; margin-top:4px; color:#ef4444;">Delete Selected Image</button>
+          </div>
+          <p class="hint-text">Drag any added image directly on the canvas to position it.</p>
+        </div>
+
+        <!-- Meme / Text Controls -->
+        <div class="rail-section" id="text-controls" style="display:none;">
+          <div class="rail-title">Meme &amp; Text</div>
+          <button id="btn-add-text" class="btn btn-primary btn-sm" style="width:100%; margin-bottom:8px;">+ Add Text</button>
+          <div id="text-layer-props" style="display:none;">
+            <label class="mini-label">Text</label>
+            <textarea id="txt-content" rows="2" placeholder="TOP TEXT"></textarea>
+            <label class="mini-label" style="margin-top:6px;">Size <span id="val-txt-size">6</span>%</label>
+            <input id="txt-size" type="range" min="2" max="20" step="0.5" value="6" />
+            <div class="btn-row" style="margin-top:6px; align-items:center;">
+              <label class="mini-label" style="margin:0;">Text Color</label>
+              <input id="txt-color" type="color" value="#ffffff" />
+            </div>
+            <label class="check-row" style="margin-top:6px;">
+              <input id="txt-stroke" type="checkbox" checked /> Meme Black Outline
+            </label>
+            <label class="mini-label" style="margin-top:8px;">Background</label>
+            <select id="txt-bg-mode">
+              <option value="none">None (Transparent)</option>
+              <option value="solid">Solid Color</option>
+              <option value="blur">Frosted Blur</option>
+            </select>
+            <div id="txt-bg-solid-opts" style="display:none; margin-top:6px;">
+              <div class="btn-row" style="align-items:center;">
+                <label class="mini-label" style="margin:0;">BG Color</label>
+                <input id="txt-bg-color" type="color" value="#000000" />
+              </div>
+              <label class="mini-label" style="margin-top:6px;">BG Opacity <span id="val-txt-bg-op">65</span>%</label>
+              <input id="txt-bg-op" type="range" min="10" max="100" value="65" />
+            </div>
+            <button id="btn-del-text-layer" class="btn btn-ghost btn-sm" style="width:100%; margin-top:8px; color:#ef4444;">Delete Selected Text</button>
+          </div>
+          <p class="hint-text">Drag text directly on the photo to move it.</p>
+        </div>
+
+        <!-- Eraser Controls -->
         <div class="rail-section" id="erase-controls" style="display:none;">
           <div class="rail-title">Eraser Brush</div>
           <label class="mini-label">Brush Size <span id="val-brush-size">28</span>px</label>
@@ -53,18 +107,7 @@
           <p class="hint-text">Paint red on the part you want to remove, then click Erase Masked.</p>
         </div>
 
-        <div class="rail-section">
-          <div class="rail-title">Presets</div>
-          <div class="preset-grid">
-            <button class="preset-btn" data-preset="default">Original</button>
-            <button class="preset-btn" data-preset="nairobi_sunset">Nairobi Sunset</button>
-            <button class="preset-btn" data-preset="mara_vivid">Mara Vivid</button>
-            <button class="preset-btn" data-preset="lamu_teal">Lamu Teal</button>
-            <button class="preset-btn" data-preset="rift_film">Rift Film</button>
-            <button class="preset-btn" data-preset="classic_bw">Classic B&amp;W</button>
-          </div>
-        </div>
-
+        <!-- Server Ops -->
         <div class="rail-section">
           <div class="rail-title">Python Server Ops</div>
           <p class="hint-text">Heavy work goes to the server:</p>
@@ -82,8 +125,8 @@
       <section class="viewport" id="viewport">
         <div class="empty-state" id="empty-state">
           <div class="empty-card">
-            <h2>Welcome to PhotoStudio</h2>
-            <p>Just drop your photo here, or click <strong>Open Photo</strong> / <strong>Try Sample</strong> to start editing.</p>
+            <h2>Drop Your Photo Here</h2>
+            <p>Click <strong>Open Photo</strong> or <strong>Try Sample</strong> to start editing.</p>
             <p class="sub-note">Fast sliders run on your browser GPU (WebGL2). Heavy ops run on Python server.</p>
           </div>
         </div>
@@ -104,8 +147,7 @@
       </section>
 
       <!-- Right Inspector -->
-      <aside class="inspector">
-        <!-- Live Histogram -->
+      <aside class="inspector" id="right-rail">
         <div class="panel">
           <div class="panel-header">
             <span>Histogram</span>
@@ -114,7 +156,6 @@
           <canvas id="histogram-canvas" width="280" height="84"></canvas>
         </div>
 
-        <!-- Tabs -->
         <div class="tab-bar">
           <button class="tab-btn active" data-tab="tone">Tone</button>
           <button class="tab-btn" data-tab="color">Color</button>
@@ -122,12 +163,10 @@
           <button class="tab-btn" data-tab="fx">FX &amp; Crop</button>
         </div>
 
-        <!-- Tab: Tone -->
         <div class="tab-pane active" id="tab-tone">
           <div class="slider-group" data-sliders="tone"></div>
         </div>
 
-        <!-- Tab: Color -->
         <div class="tab-pane" id="tab-color">
           <div class="slider-group" data-sliders="color"></div>
           <div class="sub-panel">
@@ -153,7 +192,6 @@
           </div>
         </div>
 
-        <!-- Tab: Curve -->
         <div class="tab-pane" id="tab-curve">
           <div class="curve-channels">
             <button class="curve-ch-btn active" data-ch="rgb">RGB</button>
@@ -166,11 +204,10 @@
           <p class="hint-text">Click to add point, drag to shape, double-click point to remove.</p>
         </div>
 
-        <!-- Tab: FX & Crop -->
         <div class="tab-pane" id="tab-fx">
           <div class="slider-group" data-sliders="fx"></div>
           <div class="sub-panel">
-            <div class="panel-header"><span>Transform &amp; Crop</span></div>
+            <div class="panel-header"><span>Transform &amp; Crop Modes</span></div>
             <div class="btn-row">
               <button id="btn-rot-left" class="btn btn-secondary btn-sm">Rotate -90</button>
               <button id="btn-rot-right" class="btn btn-secondary btn-sm">Rotate +90</button>
@@ -184,13 +221,24 @@
               <input id="straighten-slider" type="range" min="-45" max="45" step="0.5" value="0" />
             </div>
             <div style="margin-top:8px;">
+              <label class="mini-label">Crop Shape Mode</label>
+              <select id="crop-mode">
+                <option value="rect">Rectangle (Standard)</option>
+                <option value="circle">Circle / Oval (PNG/WebP Alpha)</option>
+                <option value="rounded">Rounded Corners (PNG/WebP Alpha)</option>
+              </select>
+            </div>
+            <div style="margin-top:8px;">
               <label class="mini-label">Aspect Ratio</label>
               <select id="crop-aspect">
                 <option value="free">Freeform</option>
                 <option value="1">1:1 Square</option>
-                <option value="0.8">4:5 Portrait</option>
+                <option value="0.8">4:5 IG Portrait</option>
+                <option value="1.3333">4:3 Standard</option>
                 <option value="1.5">3:2 Classic</option>
+                <option value="0.6667">2:3 Poster</option>
                 <option value="1.7777">16:9 Wide</option>
+                <option value="0.5625">9:16 Story / Reels</option>
               </select>
             </div>
             <button id="btn-reset-crop" class="btn btn-ghost btn-sm" style="margin-top:8px; width:100%;">Reset Crop</button>
@@ -204,7 +252,7 @@
   <div class="modal-backdrop" id="export-modal" style="display:none;">
     <div class="modal-card">
       <h3>Export Full-Res Photo</h3>
-      <p class="hint-text">Python server will replay all your edits at full resolution.</p>
+      <p class="hint-text">Python server will replay all your edits, collage layers, and meme text at full resolution.</p>
       <div class="form-row">
         <label>Format</label>
         <select id="export-format">

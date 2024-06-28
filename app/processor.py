@@ -8,7 +8,7 @@ from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 Image.MAX_IMAGE_PIXELS = 100_000_000  # Guard against decompression bombs
 
@@ -476,19 +476,103 @@ def replay_full_res_export(req) -> Tuple[bytes, str, str]:
         noise = rng.normal(0.0, (edits.grain / 100.0) * 0.075, out_srgb.shape).astype(np.float32)
         out_srgb = np.clip(out_srgb + noise, 0.0, 1.0)
 
-    final_img = Image.fromarray((out_srgb * 255.0).astype(np.uint8), mode="RGB")
-    if alpha_img is not None and req.format.lower() in ("png", "webp"):
-        final_img = final_img.convert("RGBA")
+    final_img = Image.fromarray((out_srgb * 255.0).astype(np.uint8), mode="RGB").convert("RGBA")
+    if alpha_img is not None:
         final_img.putalpha(alpha_img)
+
+    # 3. Collage Image Layers
+    fw, fh = final_img.size
+    for layer in edits.image_layers:
+        try:
+            raw_url = layer.data_url.split(",", 1)[1] if "," in layer.data_url else layer.data_url
+            ov = Image.open(io.BytesIO(base64.b64decode(raw_url))).convert("RGBA")
+            target_w = max(8, int(round(fw * layer.scale)))
+            target_h = max(8, int(round(ov.height * (target_w / max(1, ov.width)))))
+            ov = ov.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            if abs(layer.rotation) > 0.1:
+                ov = ov.rotate(-layer.rotation, resample=Image.Resampling.BICUBIC, expand=True)
+            if layer.opacity < 0.999:
+                a_ch = ov.getchannel("A").point(lambda p: int(p * layer.opacity))
+                ov.putalpha(a_ch)
+            px = int(round(layer.x * fw - ov.width * 0.5))
+            py = int(round(layer.y * fh - ov.height * 0.5))
+            final_img.alpha_composite(ov, (max(0, px), max(0, py)) if px >= 0 and py >= 0 else (0, 0)) if False else None
+            # Safe paste supporting negative offsets
+            tmp_canvas = Image.new("RGBA", (fw, fh), (0, 0, 0, 0))
+            tmp_canvas.paste(ov, (px, py))
+            final_img = Image.alpha_composite(final_img, tmp_canvas)
+        except Exception:
+            continue
+
+    # 4. Meme / Text Layers (with solid or blur background)
+    for tl in edits.text_layers:
+        if not tl.text.strip():
+            continue
+        px_size = max(14, int(round(fh * tl.font_size)))
+        try:
+            font = ImageFont.truetype("impact.ttf", px_size)
+        except Exception:
+            try:
+                font = ImageFont.truetype("arialbd.ttf", px_size)
+            except Exception:
+                font = ImageFont.load_default()
+
+        draw_tmp = ImageDraw.Draw(final_img)
+        bbox = draw_tmp.multiline_textbbox((0, 0), tl.text, font=font, align="center")
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        pad = max(4, int(tl.padding * (fh / 700.0)))
+        cx, cy = int(round(tl.x * fw)), int(round(tl.y * fh))
+        bx0, by0 = max(0, cx - tw // 2 - pad), max(0, cy - th // 2 - pad)
+        bx1, by1 = min(fw, cx + tw // 2 + pad), min(fh, cy + th // 2 + pad)
+
+        if tl.bg_mode == "blur" and bx1 > bx0 + 2 and by1 > by0 + 2:
+            region = final_img.crop((bx0, by0, bx1, by1)).filter(ImageFilter.GaussianBlur(radius=14))
+            final_img.paste(region, (bx0, by0))
+        elif tl.bg_mode == "solid" and bx1 > bx0 + 2 and by1 > by0 + 2:
+            hex_c = tl.bg_color.lstrip("#")
+            rgb_t = tuple(int(hex_c[i : i + 2], 16) for i in (0, 2, 4)) if len(hex_c) == 6 else (0, 0, 0)
+            ov_box = Image.new("RGBA", (fw, fh), (0, 0, 0, 0))
+            ImageDraw.Draw(ov_box).rounded_rectangle(
+                [bx0, by0, bx1, by1], radius=10, fill=rgb_t + (int(tl.bg_opacity * 255),)
+            )
+            final_img = Image.alpha_composite(final_img, ov_box)
+
+        draw_txt = ImageDraw.Draw(final_img)
+        stroke_w = max(2, px_size // 16) if tl.stroke else 0
+        draw_txt.multiline_text(
+            (cx, cy),
+            tl.text,
+            font=font,
+            fill=tl.color,
+            anchor="mm",
+            align="center",
+            stroke_width=stroke_w,
+            stroke_fill="#000000" if tl.stroke else None,
+        )
+
+    # 5. Crop Shape Modes (circle / rounded)
+    if tr.crop.mode in ("circle", "rounded"):
+        shape_mask = Image.new("L", (fw, fh), 0)
+        sd = ImageDraw.Draw(shape_mask)
+        if tr.crop.mode == "circle":
+            sd.ellipse([0, 0, fw - 1, fh - 1], fill=255)
+        else:
+            rad = max(12, int(min(fw, fh) * 0.08))
+            sd.rounded_rectangle([0, 0, fw - 1, fh - 1], radius=rad, fill=255)
+        existing_a = final_img.getchannel("A")
+        combined_a = Image.fromarray(
+            np.minimum(np.array(existing_a), np.array(shape_mask)).astype(np.uint8), mode="L"
+        )
+        final_img.putalpha(combined_a)
 
     out_buf = io.BytesIO()
     fmt = req.format.lower()
     if fmt == "png":
         final_img.save(out_buf, format="PNG")
-        return out_buf.getvalue(), "image/png", "picha_edited.png"
+        return out_buf.getvalue(), "image/png", "photo_edited.png"
     if fmt == "webp":
         final_img.save(out_buf, format="WEBP", quality=req.quality)
-        return out_buf.getvalue(), "image/webp", "picha_edited.webp"
+        return out_buf.getvalue(), "image/webp", "photo_edited.webp"
 
     final_img.convert("RGB").save(out_buf, format="JPEG", quality=req.quality, optimize=True)
-    return out_buf.getvalue(), "image/jpeg", "picha_edited.jpg"
+    return out_buf.getvalue(), "image/jpeg", "photo_edited.jpg"

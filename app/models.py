@@ -7,6 +7,7 @@ class CropRect(BaseModel):
     y: float = 0.0
     w: float = 1.0
     h: float = 1.0
+    mode: str = "rect"  # rect, circle, rounded
 
 
 class TransformState(BaseModel):
@@ -15,6 +16,30 @@ class TransformState(BaseModel):
     flip_h: bool = False
     flip_v: bool = False
     crop: CropRect = Field(default_factory=CropRect)
+
+
+class ImageLayer(BaseModel):
+    id: str
+    data_url: str
+    x: float = 0.5  # normalized center x (0..1)
+    y: float = 0.5  # normalized center y (0..1)
+    scale: float = 0.35  # relative to canvas width
+    rotation: float = 0.0
+    opacity: float = 1.0
+
+
+class TextLayer(BaseModel):
+    id: str
+    text: str = "TOP TEXT"
+    x: float = 0.5
+    y: float = 0.15
+    font_size: float = 0.06  # relative to image height
+    color: str = "#ffffff"
+    stroke: bool = True
+    bg_mode: str = "none"  # none, solid, blur
+    bg_color: str = "#000000"
+    bg_opacity: float = 0.65
+    padding: int = 14
 
 
 class HSLChannel(BaseModel):
@@ -61,6 +86,8 @@ class EditGraph(BaseModel):
     hsl: Dict[str, HSLChannel] = Field(default_factory=dict)
     curves: CurvePoints = Field(default_factory=CurvePoints)
     transform: TransformState = Field(default_factory=TransformState)
+    image_layers: List[ImageLayer] = Field(default_factory=list)
+    text_layers: List[TextLayer] = Field(default_factory=list)
 
 
 class ExportRequest(BaseModel):

@@ -1,4 +1,4 @@
-// PichaStudio Frontend Controller
+// Hybrid Photo Editor Frontend Controller
 
 (function () {
   const SLIDER_CONFIG = {
@@ -27,33 +27,6 @@
     ],
   };
 
-  const PRESETS = {
-    default: {},
-    nairobi_sunset: {
-      exposure: 0.15, contrast: 14, highlights: -24, shadows: 26, temp: 28, tint: 8,
-      vibrance: 22, clarity: 15, vignette: -28,
-      split_tone: { shadow_hue: 235, shadow_sat: 18, highlight_hue: 38, highlight_sat: 28, balance: 10 },
-    },
-    mara_vivid: {
-      contrast: 18, highlights: -15, shadows: 18, vibrance: 35, saturation: 12, clarity: 22, dehaze: 15,
-    },
-    lamu_teal: {
-      contrast: 12, temp: -14, vibrance: 20,
-      hsl: {
-        blue: { h: -18, s: 25, l: -10 },
-        aqua: { h: -10, s: 30, l: 5 },
-        orange: { h: -6, s: 22, l: 8 },
-      },
-      split_tone: { shadow_hue: 190, shadow_sat: 30, highlight_hue: 32, highlight_sat: 24, balance: 0 },
-    },
-    rift_film: {
-      exposure: 0.1, contrast: -8, blacks: 18, whites: -10, temp: 12, saturation: -14, grain: 28, vignette: -22,
-    },
-    classic_bw: {
-      bw: true, contrast: 28, clarity: 25, blacks: -12, whites: 15, grain: 22, vignette: -25,
-    },
-  };
-
   function defaultEdits() {
     return {
       exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0,
@@ -74,8 +47,10 @@
       },
       transform: {
         rotate_deg: 0, straighten_deg: 0, flip_h: false, flip_v: false,
-        crop: { x: 0, y: 0, w: 1, h: 1 },
+        crop: { x: 0, y: 0, w: 1, h: 1, mode: "rect" },
       },
+      image_layers: [],
+      text_layers: [],
     };
   }
 
@@ -93,11 +68,17 @@
     activeTool: "move",
     activeCurveCh: "rgb",
     activeHslCh: "red",
+    selectedImgId: null,
+    selectedTxtId: null,
     brushSize: 28,
     view: { zoom: 1, panX: 0, panY: 0, compareOriginal: false, showClipping: false },
   };
 
+  // Cache decoded HTMLImageElement objects for collage layers
+  const collageImgCache = new Map();
+
   // DOM refs
+  const workspaceEl = document.getElementById("workspace");
   const glCanvas = document.getElementById("gl-canvas");
   const overlayCanvas = document.getElementById("overlay-canvas");
   const overlayCtx = overlayCanvas.getContext("2d");
@@ -109,7 +90,6 @@
   const zoomPill = document.getElementById("zoom-pill");
   const toastEl = document.getElementById("status-toast");
 
-  // Offscreen mask canvas for Magic Eraser
   const maskCanvas = document.createElement("canvas");
   const maskCtx = maskCanvas.getContext("2d");
 
@@ -131,7 +111,7 @@
   function pushHistory() {
     state.history = state.history.slice(0, state.historyIdx + 1);
     state.history.push(deepClone(state.edits));
-    if (state.history.length > 50) state.history.shift();
+    if (state.history.length > 60) state.history.shift();
     state.historyIdx = state.history.length - 1;
     updateHistoryButtons();
   }
@@ -139,6 +119,9 @@
   function updateHistoryButtons() {
     document.getElementById("btn-undo").disabled = state.historyIdx <= 0;
     document.getElementById("btn-redo").disabled = state.historyIdx >= state.history.length - 1;
+    const total = Math.max(0, state.history.length - 1);
+    const current = Math.max(0, state.historyIdx);
+    document.getElementById("history-badge").textContent = `${current}/${total}`;
   }
 
   function undo() {
@@ -148,6 +131,7 @@
       syncUIFromState();
       scheduleRender(true);
       updateHistoryButtons();
+      showToast(state.historyIdx === 0 ? "Back to original!" : `Reset last action (${state.historyIdx}/${state.history.length - 1})`);
     }
   }
 
@@ -159,6 +143,19 @@
       scheduleRender(true);
       updateHistoryButtons();
     }
+  }
+
+  // Collapsible Toolbars
+  document.getElementById("btn-toggle-left").addEventListener("click", () => {
+    workspaceEl.classList.toggle("left-collapsed");
+    setTimeout(resizeCanvases, 30);
+  });
+  document.getElementById("btn-toggle-right").addEventListener("click", () => {
+    workspaceEl.classList.toggle("right-collapsed");
+    setTimeout(resizeCanvases, 30);
+  });
+  if (window.innerWidth <= 960) {
+    workspaceEl.classList.add("left-collapsed", "right-collapsed");
   }
 
   // Curve LUT evaluation
@@ -215,14 +212,11 @@
     const h = histCanvas.height;
     ctx.clearRect(0, 0, w, h);
 
-    // Sample downscaled canvas pixels from WebGL buffer
-    const cw = glCanvas.width;
-    const ch = glCanvas.height;
     const tmp = document.createElement("canvas");
     tmp.width = 160;
     tmp.height = 90;
     const tctx = tmp.getContext("2d");
-    tctx.drawImage(glCanvas, 0, 0, cw, ch, 0, 0, 160, 90);
+    tctx.drawImage(glCanvas, 0, 0, glCanvas.width, glCanvas.height, 0, 0, 160, 90);
     const pixels = tctx.getImageData(0, 0, 160, 90).data;
 
     const rBins = new Uint32Array(64);
@@ -234,9 +228,7 @@
       bBins[pixels[i + 2] >> 2]++;
     }
     let maxVal = 1;
-    for (let i = 1; i < 63; i++) {
-      maxVal = Math.max(maxVal, rBins[i], gBins[i], bBins[i]);
-    }
+    for (let i = 1; i < 63; i++) maxVal = Math.max(maxVal, rBins[i], gBins[i], bBins[i]);
 
     ctx.globalCompositeOperation = "screen";
     const drawChannel = (bins, color) => {
@@ -244,9 +236,7 @@
       ctx.beginPath();
       ctx.moveTo(0, h);
       for (let i = 0; i < 64; i++) {
-        const x = (i / 63) * w;
-        const y = h - Math.min(1, bins[i] / maxVal) * (h - 4);
-        ctx.lineTo(x, y);
+        ctx.lineTo((i / 63) * w, h - Math.min(1, bins[i] / maxVal) * (h - 4));
       }
       ctx.lineTo(w, h);
       ctx.closePath();
@@ -302,7 +292,6 @@
       });
     });
 
-    // HSL sliders
     const hslContainer = document.getElementById("hsl-sliders");
     ["h", "s", "l"].forEach((prop) => {
       const labelMap = { h: "Hue", s: "Saturation", l: "Luminance" };
@@ -326,7 +315,6 @@
       hslContainer.appendChild(row);
     });
 
-    // Split Toning sliders
     const splitContainer = document.getElementById("split-sliders");
     const splitItems = [
       { key: "shadow_hue", label: "Shadow Hue", min: 0, max: 360, def: 220 },
@@ -381,8 +369,45 @@
 
     document.getElementById("straighten-slider").value = state.edits.transform.straighten_deg;
     document.getElementById("val-straighten").textContent = state.edits.transform.straighten_deg;
+    document.getElementById("crop-mode").value = state.edits.transform.crop.mode || "rect";
     document.getElementById("zoom-label").textContent = `${Math.round(state.view.zoom * 100)}%`;
+
+    syncLayerPanels();
     drawCurveEditor();
+  }
+
+  function syncLayerPanels() {
+    const imgL = state.edits.image_layers.find((l) => l.id === state.selectedImgId);
+    const imgProps = document.getElementById("collage-layer-props");
+    if (imgL) {
+      imgProps.style.display = "block";
+      document.getElementById("img-scale").value = Math.round(imgL.scale * 100);
+      document.getElementById("val-img-scale").textContent = Math.round(imgL.scale * 100);
+      document.getElementById("img-rot").value = Math.round(imgL.rotation);
+      document.getElementById("val-img-rot").textContent = Math.round(imgL.rotation);
+      document.getElementById("img-op").value = Math.round(imgL.opacity * 100);
+      document.getElementById("val-img-op").textContent = Math.round(imgL.opacity * 100);
+    } else {
+      imgProps.style.display = "none";
+    }
+
+    const txtL = state.edits.text_layers.find((l) => l.id === state.selectedTxtId);
+    const txtProps = document.getElementById("text-layer-props");
+    if (txtL) {
+      txtProps.style.display = "block";
+      document.getElementById("txt-content").value = txtL.text;
+      document.getElementById("txt-size").value = Math.round(txtL.font_size * 1000) / 10;
+      document.getElementById("val-txt-size").textContent = Math.round(txtL.font_size * 1000) / 10;
+      document.getElementById("txt-color").value = txtL.color;
+      document.getElementById("txt-stroke").checked = txtL.stroke;
+      document.getElementById("txt-bg-mode").value = txtL.bg_mode;
+      document.getElementById("txt-bg-solid-opts").style.display = txtL.bg_mode === "solid" ? "block" : "none";
+      document.getElementById("txt-bg-color").value = txtL.bg_color;
+      document.getElementById("txt-bg-op").value = Math.round(txtL.bg_opacity * 100);
+      document.getElementById("val-txt-bg-op").textContent = Math.round(txtL.bg_opacity * 100);
+    } else {
+      txtProps.style.display = "none";
+    }
   }
 
   // Interactive Tone Curve Editor
@@ -393,7 +418,6 @@
     const h = curveCanvas.height;
     ctx.clearRect(0, 0, w, h);
 
-    // Grid
     ctx.strokeStyle = "#252530";
     ctx.lineWidth = 1;
     for (let i = 1; i < 4; i++) {
@@ -447,13 +471,9 @@
     const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const ny = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height));
     const pts = state.edits.curves[state.activeCurveCh];
-    if (dragCurveIdx === 0) {
-      pts[0][1] = ny;
-    } else if (dragCurveIdx === pts.length - 1) {
-      pts[pts.length - 1][1] = ny;
-    } else {
-      pts[dragCurveIdx] = [nx, ny];
-    }
+    if (dragCurveIdx === 0) pts[0][1] = ny;
+    else if (dragCurveIdx === pts.length - 1) pts[pts.length - 1][1] = ny;
+    else pts[dragCurveIdx] = [nx, ny];
     drawCurveEditor();
     scheduleRender(true);
   });
@@ -479,13 +499,121 @@
     }
   });
 
-  // Overlay Drawing (Crop Box or Magic Eraser Mask)
+  function hexToRgba(hex, alpha) {
+    const h = hex.replace("#", "");
+    const r = parseInt(h.slice(0, 2), 16) || 0;
+    const g = parseInt(h.slice(2, 4), 16) || 0;
+    const b = parseInt(h.slice(4, 6), 16) || 0;
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  // Overlay Drawing: Crop Shape Mask, Collage Images, Meme Text, Eraser Mask
   let cropBox = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
   function drawOverlay() {
     overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
     if (!glEngine || !state.imageId) return;
     const rect = glEngine.getImageScreenRect(state.edits, state.view);
 
+    // 1. Crop Shape Preview (Circle / Rounded)
+    const cropMode = state.edits.transform.crop.mode || "rect";
+    if (cropMode !== "rect" && !state.view.compareOriginal) {
+      overlayCtx.save();
+      overlayCtx.fillStyle = "rgba(17, 17, 21, 0.82)";
+      overlayCtx.beginPath();
+      overlayCtx.rect(rect.x, rect.y, rect.w, rect.h);
+      if (cropMode === "circle") {
+        overlayCtx.ellipse(rect.x + rect.w * 0.5, rect.y + rect.h * 0.5, rect.w * 0.5, rect.h * 0.5, 0, 0, Math.PI * 2, true);
+      } else {
+        const rad = Math.max(8, Math.min(rect.w, rect.h) * 0.08);
+        overlayCtx.roundRect(rect.x, rect.y, rect.w, rect.h, rad);
+      }
+      overlayCtx.fill("evenodd");
+      overlayCtx.restore();
+    }
+
+    // 2. Collage Image Layers
+    if (!state.view.compareOriginal) {
+      state.edits.image_layers.forEach((layer) => {
+        const img = collageImgCache.get(layer.id);
+        if (!img) return;
+        const dw = rect.w * layer.scale;
+        const dh = dw * (img.naturalHeight / Math.max(1, img.naturalWidth));
+        const cx = rect.x + layer.x * rect.w;
+        const cy = rect.y + layer.y * rect.h;
+        overlayCtx.save();
+        overlayCtx.globalAlpha = layer.opacity;
+        overlayCtx.translate(cx, cy);
+        overlayCtx.rotate((layer.rotation * Math.PI) / 180);
+        overlayCtx.drawImage(img, -dw * 0.5, -dh * 0.5, dw, dh);
+        if (state.activeTool === "collage" && layer.id === state.selectedImgId) {
+          overlayCtx.strokeStyle = "#f59e0b";
+          overlayCtx.lineWidth = 2;
+          overlayCtx.strokeRect(-dw * 0.5, -dh * 0.5, dw, dh);
+        }
+        overlayCtx.restore();
+      });
+
+      // 3. Meme / Text Layers
+      state.edits.text_layers.forEach((tl) => {
+        if (!tl.text.trim()) return;
+        const pxSize = Math.max(12, rect.h * tl.font_size);
+        overlayCtx.save();
+        overlayCtx.font = `900 ${pxSize}px Impact, "Arial Black", sans-serif`;
+        overlayCtx.textAlign = "center";
+        overlayCtx.textBaseline = "middle";
+
+        const lines = tl.text.split("\n");
+        const lineH = pxSize * 1.15;
+        let maxW = 0;
+        lines.forEach((ln) => (maxW = Math.max(maxW, overlayCtx.measureText(ln).width)));
+        const boxW = maxW + tl.padding * 2;
+        const boxH = lines.length * lineH + tl.padding * 1.4;
+        const cx = rect.x + tl.x * rect.w;
+        const cy = rect.y + tl.y * rect.h;
+        const bx = cx - boxW * 0.5;
+        const by = cy - boxH * 0.5;
+
+        if (tl.bg_mode === "blur") {
+          overlayCtx.save();
+          overlayCtx.beginPath();
+          overlayCtx.roundRect(bx, by, boxW, boxH, 8);
+          overlayCtx.clip();
+          overlayCtx.filter = "blur(10px)";
+          overlayCtx.drawImage(glCanvas, 0, 0);
+          overlayCtx.filter = "none";
+          overlayCtx.fillStyle = "rgba(0,0,0,0.18)";
+          overlayCtx.fillRect(bx, by, boxW, boxH);
+          overlayCtx.restore();
+        } else if (tl.bg_mode === "solid") {
+          overlayCtx.fillStyle = hexToRgba(tl.bg_color, tl.bg_opacity);
+          overlayCtx.beginPath();
+          overlayCtx.roundRect(bx, by, boxW, boxH, 8);
+          overlayCtx.fill();
+        }
+
+        const startY = cy - ((lines.length - 1) * lineH) * 0.5;
+        lines.forEach((ln, i) => {
+          const ly = startY + i * lineH;
+          if (tl.stroke) {
+            overlayCtx.lineWidth = Math.max(2, pxSize / 10);
+            overlayCtx.strokeStyle = "#000000";
+            overlayCtx.lineJoin = "round";
+            overlayCtx.strokeText(ln, cx, ly);
+          }
+          overlayCtx.fillStyle = tl.color;
+          overlayCtx.fillText(ln, cx, ly);
+        });
+
+        if (state.activeTool === "text" && tl.id === state.selectedTxtId) {
+          overlayCtx.strokeStyle = "#f59e0b";
+          overlayCtx.lineWidth = 1.5;
+          overlayCtx.strokeRect(bx - 2, by - 2, boxW + 4, boxH + 4);
+        }
+        overlayCtx.restore();
+      });
+    }
+
+    // 4. Eraser Mask or Crop Box
     if (state.activeTool === "erase") {
       overlayCtx.save();
       overlayCtx.globalAlpha = 0.55;
@@ -505,9 +633,14 @@
 
       overlayCtx.strokeStyle = "#f59e0b";
       overlayCtx.lineWidth = 2;
-      overlayCtx.strokeRect(cx, cy, cw, ch);
+      if (cropMode === "circle") {
+        overlayCtx.beginPath();
+        overlayCtx.ellipse(cx + cw * 0.5, cy + ch * 0.5, cw * 0.5, ch * 0.5, 0, 0, Math.PI * 2);
+        overlayCtx.stroke();
+      } else {
+        overlayCtx.strokeRect(cx, cy, cw, ch);
+      }
 
-      // Rule of thirds
       overlayCtx.strokeStyle = "rgba(255,255,255,0.35)";
       overlayCtx.lineWidth = 1;
       for (let i = 1; i <= 2; i++) {
@@ -521,10 +654,11 @@
     }
   }
 
-  // Viewport Mouse Interactions (Pan, Crop, Magic Eraser Paint)
+  // Viewport Mouse Interactions
   let isDragging = false;
   let dragStart = { x: 0, y: 0 };
   let cropDragStart = null;
+  let draggingLayer = null;
 
   overlayCanvas.addEventListener("mousedown", (e) => {
     if (!state.imageId) return;
@@ -533,15 +667,41 @@
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
     dragStart = { x: mx, y: my, panX: state.view.panX, panY: state.view.panY };
+    const imgRect = glEngine.getImageScreenRect(state.edits, state.view);
+    const nx = (mx - imgRect.x) / imgRect.w;
+    const ny = (my - imgRect.y) / imgRect.h;
 
     if (state.activeTool === "erase") {
       paintMaskAt(mx, my);
     } else if (state.activeTool === "crop") {
-      const imgRect = glEngine.getImageScreenRect(state.edits, state.view);
-      cropDragStart = {
-        nx: Math.max(0, Math.min(1, (mx - imgRect.x) / imgRect.w)),
-        ny: Math.max(0, Math.min(1, (my - imgRect.y) / imgRect.h)),
-      };
+      cropDragStart = { nx: Math.max(0, Math.min(1, nx)), ny: Math.max(0, Math.min(1, ny)) };
+    } else if (state.activeTool === "collage") {
+      // Pick closest collage layer
+      let found = null;
+      let best = 0.25;
+      state.edits.image_layers.forEach((l) => {
+        const d = Math.hypot(l.x - nx, l.y - ny);
+        if (d < best) { best = d; found = l; }
+      });
+      if (found) {
+        state.selectedImgId = found.id;
+        draggingLayer = { type: "img", layer: found, ox: found.x - nx, oy: found.y - ny };
+        syncLayerPanels();
+        drawOverlay();
+      }
+    } else if (state.activeTool === "text") {
+      let found = null;
+      let best = 0.25;
+      state.edits.text_layers.forEach((l) => {
+        const d = Math.hypot(l.x - nx, l.y - ny);
+        if (d < best) { best = d; found = l; }
+      });
+      if (found) {
+        state.selectedTxtId = found.id;
+        draggingLayer = { type: "txt", layer: found, ox: found.x - nx, oy: found.y - ny };
+        syncLayerPanels();
+        drawOverlay();
+      }
     }
   });
 
@@ -550,6 +710,9 @@
     const rect = overlayCanvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
+    const imgRect = glEngine.getImageScreenRect(state.edits, state.view);
+    const nx = (mx - imgRect.x) / imgRect.w;
+    const ny = (my - imgRect.y) / imgRect.h;
 
     if (state.activeTool === "move") {
       state.view.panX = dragStart.panX + (mx - dragStart.x);
@@ -557,14 +720,17 @@
       scheduleRender(false);
     } else if (state.activeTool === "erase") {
       paintMaskAt(mx, my);
+    } else if (draggingLayer) {
+      draggingLayer.layer.x = Math.max(0, Math.min(1, nx + draggingLayer.ox));
+      draggingLayer.layer.y = Math.max(0, Math.min(1, ny + draggingLayer.oy));
+      drawOverlay();
     } else if (state.activeTool === "crop" && cropDragStart) {
-      const imgRect = glEngine.getImageScreenRect(state.edits, state.view);
-      const nx = Math.max(0, Math.min(1, (mx - imgRect.x) / imgRect.w));
-      const ny = Math.max(0, Math.min(1, (my - imgRect.y) / imgRect.h));
-      let x = Math.min(cropDragStart.nx, nx);
-      let y = Math.min(cropDragStart.ny, ny);
-      let w = Math.max(0.05, Math.abs(nx - cropDragStart.nx));
-      let h = Math.max(0.05, Math.abs(ny - cropDragStart.ny));
+      const cnx = Math.max(0, Math.min(1, nx));
+      const cny = Math.max(0, Math.min(1, ny));
+      let x = Math.min(cropDragStart.nx, cnx);
+      let y = Math.min(cropDragStart.ny, cny);
+      let w = Math.max(0.05, Math.abs(cnx - cropDragStart.nx));
+      let h = Math.max(0.05, Math.abs(cny - cropDragStart.ny));
       const aspect = document.getElementById("crop-aspect").value;
       if (aspect !== "free") {
         const ratio = parseFloat(aspect) / (imgRect.w / imgRect.h);
@@ -578,6 +744,10 @@
   window.addEventListener("mouseup", () => {
     if (!isDragging) return;
     isDragging = false;
+    if (draggingLayer) {
+      draggingLayer = null;
+      pushHistory();
+    }
     if (state.activeTool === "crop" && cropDragStart) {
       cropDragStart = null;
       const cur = state.edits.transform.crop;
@@ -586,6 +756,7 @@
         y: cur.y + cropBox.y * cur.h,
         w: cropBox.w * cur.w,
         h: cropBox.h * cur.h,
+        mode: cur.mode || "rect",
       };
       cropBox = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
       pushHistory();
@@ -615,7 +786,6 @@
     drawOverlay();
   }
 
-  // Load Proxy Image into WebGL
   function loadProxyUrl(url, width, height) {
     const img = new Image();
     img.crossOrigin = "anonymous";
@@ -663,7 +833,6 @@
     showToast("Photo is ready! You can start editing.");
   }
 
-  // Wire UI Events
   document.getElementById("file-input").addEventListener("change", (e) => {
     if (e.target.files[0]) uploadFile(e.target.files[0]);
   });
@@ -680,7 +849,7 @@
   });
 
   document.getElementById("btn-sample").addEventListener("click", async () => {
-    showToast("Generating sample Rift Valley sunset...");
+    showToast("Generating sample sunset photo...");
     const res = await fetch("/api/sample", { method: "POST" });
     const data = await res.json();
     state.imageId = data.image_id;
@@ -697,11 +866,132 @@
     state.activeTool = tool;
     document.querySelectorAll(".tool-btn").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
     document.getElementById("erase-controls").style.display = tool === "erase" ? "block" : "none";
+    document.getElementById("collage-controls").style.display = tool === "collage" ? "block" : "none";
+    document.getElementById("text-controls").style.display = tool === "text" ? "block" : "none";
     overlayCanvas.style.cursor = tool === "move" ? "grab" : "crosshair";
     drawOverlay();
   }
   document.querySelectorAll(".tool-btn").forEach((b) => b.addEventListener("click", () => setTool(b.dataset.tool)));
 
+  // Collage Layer Controls
+  document.getElementById("collage-input").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file || !state.imageId) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const id = "img_" + Date.now();
+      const img = new Image();
+      img.onload = () => {
+        collageImgCache.set(id, img);
+        state.edits.image_layers.push({ id, data_url: reader.result, x: 0.5, y: 0.5, scale: 0.35, rotation: 0, opacity: 1.0 });
+        state.selectedImgId = id;
+        pushHistory();
+        syncLayerPanels();
+        drawOverlay();
+        showToast("Image added on top! Drag it to position.");
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  });
+
+  ["img-scale", "img-rot", "img-op"].forEach((id) => {
+    const el = document.getElementById(id);
+    el.addEventListener("input", () => {
+      const l = state.edits.image_layers.find((x) => x.id === state.selectedImgId);
+      if (!l) return;
+      if (id === "img-scale") l.scale = parseFloat(el.value) / 100;
+      if (id === "img-rot") l.rotation = parseFloat(el.value);
+      if (id === "img-op") l.opacity = parseFloat(el.value) / 100;
+      syncLayerPanels();
+      drawOverlay();
+    });
+    el.addEventListener("change", () => pushHistory());
+  });
+
+  document.getElementById("btn-del-img-layer").addEventListener("click", () => {
+    state.edits.image_layers = state.edits.image_layers.filter((x) => x.id !== state.selectedImgId);
+    state.selectedImgId = null;
+    pushHistory();
+    syncLayerPanels();
+    drawOverlay();
+  });
+
+  // Meme / Text Layer Controls
+  document.getElementById("btn-add-text").addEventListener("click", () => {
+    if (!state.imageId) return showToast("Open a photo first!");
+    const id = "txt_" + Date.now();
+    state.edits.text_layers.push({
+      id, text: "TOP TEXT", x: 0.5, y: 0.16, font_size: 0.07,
+      color: "#ffffff", stroke: true, bg_mode: "none", bg_color: "#000000", bg_opacity: 0.65, padding: 14,
+    });
+    state.selectedTxtId = id;
+    pushHistory();
+    syncLayerPanels();
+    drawOverlay();
+  });
+
+  document.getElementById("txt-content").addEventListener("input", (e) => {
+    const l = state.edits.text_layers.find((x) => x.id === state.selectedTxtId);
+    if (!l) return;
+    l.text = e.target.value;
+    drawOverlay();
+  });
+  document.getElementById("txt-content").addEventListener("change", () => pushHistory());
+
+  document.getElementById("txt-size").addEventListener("input", (e) => {
+    const l = state.edits.text_layers.find((x) => x.id === state.selectedTxtId);
+    if (!l) return;
+    l.font_size = parseFloat(e.target.value) / 100;
+    document.getElementById("val-txt-size").textContent = e.target.value;
+    drawOverlay();
+  });
+  document.getElementById("txt-size").addEventListener("change", () => pushHistory());
+
+  document.getElementById("txt-color").addEventListener("input", (e) => {
+    const l = state.edits.text_layers.find((x) => x.id === state.selectedTxtId);
+    if (!l) return;
+    l.color = e.target.value;
+    drawOverlay();
+  });
+  document.getElementById("txt-stroke").addEventListener("change", (e) => {
+    const l = state.edits.text_layers.find((x) => x.id === state.selectedTxtId);
+    if (!l) return;
+    l.stroke = e.target.checked;
+    pushHistory();
+    drawOverlay();
+  });
+  document.getElementById("txt-bg-mode").addEventListener("change", (e) => {
+    const l = state.edits.text_layers.find((x) => x.id === state.selectedTxtId);
+    if (!l) return;
+    l.bg_mode = e.target.value;
+    pushHistory();
+    syncLayerPanels();
+    drawOverlay();
+  });
+  document.getElementById("txt-bg-color").addEventListener("input", (e) => {
+    const l = state.edits.text_layers.find((x) => x.id === state.selectedTxtId);
+    if (!l) return;
+    l.bg_color = e.target.value;
+    drawOverlay();
+  });
+  document.getElementById("txt-bg-op").addEventListener("input", (e) => {
+    const l = state.edits.text_layers.find((x) => x.id === state.selectedTxtId);
+    if (!l) return;
+    l.bg_opacity = parseFloat(e.target.value) / 100;
+    document.getElementById("val-txt-bg-op").textContent = e.target.value;
+    drawOverlay();
+  });
+  document.getElementById("btn-del-text-layer").addEventListener("click", () => {
+    state.edits.text_layers = state.edits.text_layers.filter((x) => x.id !== state.selectedTxtId);
+    state.selectedTxtId = null;
+    pushHistory();
+    syncLayerPanels();
+    drawOverlay();
+  });
+
+  // Brush & Mask
   document.getElementById("brush-size").addEventListener("input", (e) => {
     state.brushSize = parseInt(e.target.value, 10);
     document.getElementById("val-brush-size").textContent = state.brushSize;
@@ -722,7 +1012,6 @@
     });
   });
 
-  // Curve channels
   document.querySelectorAll(".curve-ch-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".curve-ch-btn").forEach((b) => b.classList.remove("active"));
@@ -738,30 +1027,12 @@
     scheduleRender(true);
   });
 
-  // HSL channel switch
   document.getElementById("hsl-channel").addEventListener("change", (e) => {
     state.activeHslCh = e.target.value;
     syncUIFromState();
   });
 
-  // Presets
-  document.querySelectorAll(".preset-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const p = PRESETS[btn.dataset.preset];
-      const fresh = defaultEdits();
-      fresh.transform = deepClone(state.edits.transform);
-      Object.assign(fresh, deepClone(p));
-      if (p.hsl) Object.assign(fresh.hsl, deepClone(p.hsl));
-      if (p.split_tone) Object.assign(fresh.split_tone, deepClone(p.split_tone));
-      state.edits = fresh;
-      pushHistory();
-      syncUIFromState();
-      scheduleRender(true);
-      showToast(`Preset "${btn.textContent}" has been applied!`);
-    });
-  });
-
-  // Transform controls
+  // Transform & Crop Modes
   document.getElementById("btn-rot-left").addEventListener("click", () => {
     state.edits.transform.rotate_deg = (state.edits.transform.rotate_deg - 90) % 360;
     pushHistory();
@@ -789,6 +1060,11 @@
     scheduleRender(true);
   });
   document.getElementById("straighten-slider").addEventListener("change", () => pushHistory());
+  document.getElementById("crop-mode").addEventListener("change", (e) => {
+    state.edits.transform.crop.mode = e.target.value;
+    pushHistory();
+    drawOverlay();
+  });
   document.getElementById("btn-reset-crop").addEventListener("click", () => {
     state.edits.transform = defaultEdits().transform;
     pushHistory();
@@ -801,6 +1077,8 @@
   document.getElementById("btn-redo").addEventListener("click", redo);
   document.getElementById("btn-reset").addEventListener("click", () => {
     state.edits = defaultEdits();
+    state.selectedImgId = null;
+    state.selectedTxtId = null;
     pushHistory();
     syncUIFromState();
     scheduleRender(true);
@@ -821,7 +1099,6 @@
     scheduleRender(false);
   });
 
-  // Zoom controls
   document.getElementById("btn-zoom-in").addEventListener("click", () => {
     state.view.zoom = Math.min(8, state.view.zoom * 1.25);
     syncUIFromState();
@@ -926,7 +1203,7 @@
 
   // Keyboard shortcuts
   window.addEventListener("keydown", (e) => {
-    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
       e.preventDefault();
       undo();

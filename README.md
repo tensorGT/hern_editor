@@ -1,6 +1,6 @@
-# PhotoStudio
+# Hybrid Photo Editor
 
-Welcome to PhotoStudio, a fast plug and play photo editor where the easy real-time sliders run straight on your browser GPU (HTML5 + WebGL2 + JS) and the heavy work runs on Python (FastAPI + OpenCV + Pillow + NumPy).
+Welcome, this is a fast plug and play photo editor where the easy real-time sliders run straight on your browser GPU (HTML5 + WebGL2 + JS) and the heavy work runs on Python (FastAPI + OpenCV + Pillow + NumPy).
 
 No Redis, no Docker, no Node build step, no stress. Just start the server in terminal and start editing your photos.
 

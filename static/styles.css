@@ -34,28 +34,22 @@ html, body {
 }
 
 .topbar {
-  height: 48px;
+  min-height: 48px;
   background: var(--bg-1);
   border-bottom: 1px solid var(--border);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  padding: 0 14px;
+  gap: 6px;
+  padding: 6px 12px;
 }
 
-.brand {
+.top-left, .top-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  font-size: 15px;
-}
-
-.brand-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 10px var(--accent);
+  gap: 6px;
 }
 
 .badge {
@@ -67,17 +61,11 @@ html, body {
   border-radius: 999px;
 }
 
-.top-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .sep {
   width: 1px;
   height: 20px;
   background: var(--border);
-  margin: 0 4px;
+  margin: 0 2px;
 }
 
 .btn {
@@ -137,20 +125,46 @@ html, body {
 .workspace {
   flex: 1;
   display: grid;
-  grid-template-columns: 210px 1fr 300px;
+  grid-template-columns: 220px 1fr 300px;
   min-height: 0;
+  position: relative;
+}
+
+.workspace.left-collapsed {
+  grid-template-columns: 0px 1fr 300px;
+}
+
+.workspace.right-collapsed {
+  grid-template-columns: 220px 1fr 0px;
+}
+
+.workspace.left-collapsed.right-collapsed {
+  grid-template-columns: 0px 1fr 0px;
 }
 
 .left-rail, .inspector {
   background: var(--bg-1);
   border-right: 1px solid var(--border);
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 12px;
+}
+
+.workspace.left-collapsed .left-rail {
+  padding: 0;
+  border-right: none;
+  visibility: hidden;
 }
 
 .inspector {
   border-right: none;
   border-left: 1px solid var(--border);
+}
+
+.workspace.right-collapsed .inspector {
+  padding: 0;
+  border-left: none;
+  visibility: hidden;
 }
 
 .rail-section {
@@ -189,26 +203,6 @@ html, body {
   color: var(--accent-hover);
 }
 
-.preset-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 5px;
-}
-
-.preset-btn {
-  background: var(--bg-2);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 5px;
-  padding: 6px 4px;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.preset-btn:hover {
-  border-color: var(--accent);
-}
-
 .server-ops {
   display: flex;
   flex-direction: column;
@@ -238,6 +232,7 @@ html, body {
   padding: 28px 34px;
   text-align: center;
   max-width: 420px;
+  margin: 16px;
 }
 
 .empty-card h2 {
@@ -296,6 +291,7 @@ html, body {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s ease;
+  z-index: 30;
 }
 
 .status-toast.show {
@@ -387,7 +383,7 @@ input[type="range"] {
   cursor: pointer;
 }
 
-select, input[type="number"] {
+select, input[type="number"], textarea {
   width: 100%;
   background: var(--bg-1);
   color: var(--text);
@@ -395,6 +391,16 @@ select, input[type="number"] {
   border-radius: 5px;
   padding: 5px 7px;
   font-size: 12px;
+  font-family: inherit;
+  user-select: text;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .sub-panel {
@@ -475,6 +481,7 @@ select, input[type="number"] {
   border-radius: 10px;
   padding: 20px;
   width: 340px;
+  max-width: 92vw;
 }
 
 .modal-card h3 {
@@ -497,4 +504,33 @@ select, input[type="number"] {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 18px;
+}
+
+/* Responsive drawers on smaller screens */
+@media (max-width: 960px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .left-rail {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 230px;
+    z-index: 25;
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.5);
+  }
+  .inspector {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 25;
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.5);
+  }
+  .workspace.left-collapsed .left-rail,
+  .workspace.right-collapsed .inspector {
+    display: none;
+  }
 }

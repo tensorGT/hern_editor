@@ -18,14 +18,14 @@ from app.processor import (
     save_uploaded_image,
 )
 
-app = FastAPI(title="PhotoStudio API", version="0.1.0")
+app = FastAPI(title="Photo Editor API", version="0.1.0")
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "message": "PhotoStudio Python server is ready!"}
+    return {"status": "ok", "message": "Python server is ready!"}
 
 
 @app.post("/api/upload")
